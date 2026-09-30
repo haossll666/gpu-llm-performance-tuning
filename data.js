@@ -198,3 +198,86 @@ lspci -vvv -d 10de: | grep -E "LnkCap|LnkSta"
 nccl-tests/build/all_reduce_perf -b 8M -e 128M -f 2 -g 4`
   }
 ];
+
+export const ROADMAP_STEPS = [
+  {
+    step: 1,
+    title: "① Prefill vs Decode",
+    summary: "计算密集 (Compute-Bound) vs 访存密集 (Memory-Bound) 的本质物理区隔",
+    concept: "Prefill 处理全量提示词，生成首字，激活大尺度 GEMM 运算；Decode 每次仅处理 1 个 Token，自回归迭代加载几十 GB 权重只做向量-矩阵乘法（GEMV）。",
+    hwMetrics: "• Prefill: SM 利用率可达 70%~90%，Tensor Core 满载。\n• Decode: SM 利用率常 < 10%，HBM 带宽利用率（MBU）跑满 70% 以上。",
+    tuningTakeaway: "单流 Decode 的生成速度只取决于显存带宽（HBM GB/s）除以权重体积；一味堆砌 TFLOPS 算力无法提升单流速度。"
+  },
+  {
+    step: 2,
+    title: "② TTFT / TPOT / tok/s",
+    summary: "端到端交互延迟量化与黄金 SLA 指标定义",
+    concept: "TTFT = 排队时延 + Prefill 时延；TPOT = 单 Token 生成耗时；ITL (Inter-Token Latency) 反映流式打字机效果的均匀性。",
+    hwMetrics: "• 优秀体验指标：TTFT P95 < 800ms，TPOT < 30ms/tok (约 35 tok/s)，ITL P99 抖动 < 40ms。",
+    tuningTakeaway: "慢必须先量化：用户感觉卡，必须先通过 Prometheus 拆解是卡在队列排队、卡在长 Prefill，还是卡在 Decode 显存带宽争抢。"
+  },
+  {
+    step: 3,
+    title: "③ KV Cache (MLA & Paged)",
+    summary: "PagedAttention 分页机制与 DeepSeek MLA 低秩压缩革命",
+    concept: "传统 MHA/GQA 随着上下文加长线性吃爆显存；DeepSeek MLA 引入潜在向量压缩，单 Token 仅需缓存 576 元素，显存压缩至 GQA 的 28%。",
+    hwMetrics: "• 显存公式：MLA 字节/token/层 = (512 + 64) * dtype_bytes = 576 字节 (FP8) 或 1152 字节 (FP16)。",
+    tuningTakeaway: "4 卡 24GB 环境下，MLA 允许承载 4 倍以上的上下文并发，从根源上消除 OOM 和 Preemption 驱逐。"
+  },
+  {
+    step: 4,
+    title: "④ HBM / Tensor Core",
+    summary: "GPU 硅片微架构、Roofline 模型与机器算力平衡比",
+    concept: "Machine Balance 拐点公式：Ridge Point = Peak TFLOPS / Peak Bandwidth。Decode 算力密度仅 2~8 FLOPs/Byte，远远落入访存受限区。",
+    hwMetrics: "• RTX 4090 平衡拐点: 164 FLOPs/Byte；H100 SXM: 295 FLOPs/Byte。",
+    tuningTakeaway: "通过连续批处理（Continuous Batching）增大并发 Batch Size，让多个流共享单次权重载入，将算力密度推高至拐点！"
+  },
+  {
+    step: 5,
+    title: "⑤ TP / EP / DP 并行",
+    summary: "单机 4 卡分布式并行策略：Dense 模型 vs MoE 模型的并行博弈",
+    concept: "Dense 模型通常采用张量并行（TP=4）；而 MoE 模型在无 NVLink 的 PCIe 拓扑下，专家并行（EP=4）通信量远小于频繁 All-Reduce 的 TP=4。",
+    hwMetrics: "• TP=4 每层需 All-Reduce 同步；EP=4 仅在 MoE 层做 All-to-All 传输 Token 激活值。",
+    tuningTakeaway: "PCIe 拓扑下优先采用 EP 专家并行或 TP=2+EP=2 混合并行，规避高频同步气泡。"
+  },
+  {
+    step: 6,
+    title: "⑥ NCCL / PCIe 瓶颈",
+    summary: "PCIe 31.5 GB/s 带宽墙、NUMA 拓扑与 NCCL 环形缓冲区调优",
+    concept: "PCIe Gen4 x16 双向仅 31.5 GB/s（对比 NVLink 900 GB/s）。跨 CPU Socket（SYS 拓扑）通信还会受制于 UPI/QPI 总线时延劣化。",
+    hwMetrics: "• 运行 `nvidia-smi topo -m` 查看拓扑关系（PIX vs SYS）；检查 `DCGM_FI_DEV_PCIE_TX_THROUGHPUT`。",
+    tuningTakeaway: "设置 `NCCL_BUFFSIZE=4194304` 扩大环形缓冲；设置 `NCCL_P2P_DISABLE=0` 启用 PCIe 直通交换。"
+  },
+  {
+    step: 7,
+    title: "⑦ Attention / MoE kernels",
+    summary: "FlashAttention-2/3、FlashDecoding 与 Triton 算子内核加速",
+    concept: "FlashAttention 利用片上 SRAM 做分块 Softmax，避免把 $N \times N$ 注意力矩阵写入 HBM；FlashDecoding 对长上下文进行并行化归约。",
+    hwMetrics: "• Kernel Duration 微秒级耗时、SRAM Shared Memory 利用率、Warp 活跃度。",
+    tuningTakeaway: "MLA 需要专门融合算子（FlashMLA）；MoE Gating 路由与 Top-K 选通必须由高度优化的 Triton/CUDA 算子实现。"
+  },
+  {
+    step: 8,
+    title: "⑧ vLLM / SGLang 生产参数",
+    summary: "连续批处理、分块预填充 (Chunked Prefill) 与前缀基数树缓存",
+    concept: "Chunked Prefill 消除长短请求争抢；RadixAttention 自动识别跨会话、跨多轮请求的共享 System Prompt 并复用 KV。",
+    hwMetrics: "• `vllm:prefix_cache_hit_rate` 前缀命中率提升至 60%+ 时，平均 TTFT 降低 85%。",
+    tuningTakeaway: "必开双剑客：`--enable-chunked-prefill true` + `--enable-prefix-caching`。"
+  },
+  {
+    step: 9,
+    title: "⑨ Prometheus / Grafana 监控",
+    summary: "生产级全栈可观测性：DCGM 硬件指标与推理引擎状态聚合",
+    concept: "监控大盘三大黄金看板：1. 延迟分布 (P50/P95/P99 TTFT 与 TPOT)；2. 显存与队列水位；3. PCIe 总线与 GPU 功耗温控。",
+    hwMetrics: "• 告警规则：`vllm:gpu_cache_usage_factor > 0.95` 时紧急告警，防止请求被驱逐重算引发雪崩。",
+    tuningTakeaway: "配合本文档提供的 Grafana Dashboard JSON 与 Prometheus Rules，开箱即用搭建生产监控看板。"
+  },
+  {
+    step: 10,
+    title: "⑩ Nsight Systems 抓包",
+    summary: "NVIDIA Nsight 真实时序捕获：定位通信气泡与 Host-Device 阻塞",
+    concept: "使用 `nsys profile` 捕获 CUDA Kernel、NCCL 通信与 OS Runtime。排查 Step 之间的时钟空泡与未融合算子。",
+    hwMetrics: "• Timeline 中的 `ncclKernel_AllToAll` / `AllReduce` 耗时比例；CUDA Stream 并发利用率。",
+    tuningTakeaway: "真实调优必须以时序 Trace 为准，告别拍脑袋猜瓶颈。"
+  }
+];

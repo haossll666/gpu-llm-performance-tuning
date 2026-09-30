@@ -159,18 +159,45 @@
         </div>
       </div>
 
-      <!-- Roofline Model Primer -->
+      </div>
+
+      <!-- Interactive SVG Roofline Model Visualizer -->
       <div class="calc-card">
         <div class="calc-title">
-          <span>📐 Roofline 模型与硬件平衡比 (Machine Balance)</span>
+          <span>📐 动态 Roofline 物理曲线可视化 (Interactive Roofline)</span>
         </div>
-        <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
-          <p><strong>Machine Balance 拐点公式：</strong> \(I^* = \frac{\text{Peak TFLOPS}}{\text{Peak Memory Bandwidth (TB/s)}}\)</p>
-          <ul style="margin: 10px 0 10px 18px;">
-            <li><strong>RTX 4090：</strong> 165 TFLOPS / 1.0 TB/s = <strong>165 FLOPs/Byte</strong></li>
-            <li><strong>H100 SXM：</strong> 989 TFLOPS / 3.35 TB/s = <strong>295 FLOPs/Byte</strong></li>
-          </ul>
-          <p><strong>结论：</strong> Decode 阶段的算力密度（Arithmetic Intensity）仅为约 <strong>2~8 FLOPs/Byte</strong>，远远低于 165！因此在自回归生成阶段，提升单 Token 生成速度的唯一物理杠杆是<strong>显存带宽（HBM/GDDR）</strong>或通过<strong>量化/投机解码</strong>减少每次读取权重的字节数，盲目堆砌 TFLOPS 算力毫无意义！</p>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+          动态观察当前硬件在 Prefill（算力受限）与 Decode（显存受限）下的极限分布及拐点（Machine Balance）。
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px;">
+          <div class="form-group">
+            <label class="form-label">目标 GPU 架构</label>
+            <select id="roofline-gpu">
+              <option value="rtx4090" selected>NVIDIA RTX 4090 (GDDR6X 1TB/s)</option>
+              <option value="l40s">NVIDIA L40S (GDDR6 864GB/s)</option>
+              <option value="a100-sxm">NVIDIA A100 SXM (HBM2e 2TB/s)</option>
+              <option value="h100-sxm">NVIDIA H100 SXM (HBM3 3.35TB/s)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">计算与存储精度</label>
+            <select id="roofline-prec">
+              <option value="fp16" selected>FP16 / BF16</option>
+              <option value="fp8">FP8 量化加速</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- SVG Visualizer Canvas -->
+        <div style="background: #000; border-radius: var(--radius-md); padding: 12px; border: 1px solid var(--border-subtle); margin-bottom: 14px; position: relative;">
+          <svg id="roofline-svg" viewBox="0 0 380 200" style="width: 100%; height: auto; display: block; overflow: visible;">
+            <!-- Generated dynamically by app.js -->
+          </svg>
+        </div>
+
+        <div id="roofline-status-box" style="font-size: 12px; line-height: 1.6; background: rgba(56, 189, 248, 0.08); padding: 10px 14px; border-radius: var(--radius-sm); border-left: 3px solid var(--accent-cyan);">
+          <!-- Dynamically updated by app.js -->
         </div>
       </div>
     </section>
@@ -205,6 +232,42 @@
             <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Step 4: 排查底层算子与访存墙 (Kernel Profiling)</div>
             <p>使用 <code>nsys</code> 抓包。如果每个 Step 之间存在大量空白（CPU Launch 延迟），开启 CUDA Graph；若 FlashAttention 执行耗时过长，确认驱动与 PyTorch 版本是否支持 FlashAttention-2/3。</p>
           </div>
+        </div>
+      </div>
+
+      <!-- Interactive 4xGPU MoE All-to-All Token Dispatch Simulator -->
+      <div class="calc-card">
+        <div class="calc-title">
+          <span>⚡ 4×GPU PCIe MoE 专家路由分发模拟器 (All-to-All Simulator)</span>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+          直观模拟 DeepSeek 64 专家（每卡承载 16 个专家）在 PCIe 4.0 x16 下的 Token 跨卡分发（Dispatch）与汇聚（Combine）真实开销。
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px;">
+          <div class="form-group">
+            <div class="form-label">
+              <span>生成并发批次 (Batch Size)</span>
+              <span class="val" id="moe-sim-batch-val">16 流</span>
+            </div>
+            <input type="range" id="moe-sim-batch" min="4" max="64" step="4" value="16">
+          </div>
+          <div class="form-group">
+            <label class="form-label">每 Token 激活专家数 (Top-K)</label>
+            <select id="moe-sim-topk">
+              <option value="4">Top-4 激活 (小激活开销)</option>
+              <option value="8" selected>Top-8 激活 (DeepSeek-V2/V3 标配)</option>
+            </select>
+          </div>
+        </div>
+
+        <button id="btn-run-moe-sim" class="option-btn" style="justify-content: center; font-weight: 700; color: var(--accent-cyan); border-color: var(--accent-cyan); margin-bottom: 14px;">
+          <span>▶️ 执行单步 MoE Token 动态路由模拟</span>
+        </button>
+
+        <!-- Simulated Cluster Status Panel -->
+        <div id="moe-sim-output" style="background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 14px; border: 1px solid var(--border-subtle); font-size: 13px; line-height: 1.6;">
+          <div style="color: var(--text-muted);">点击上方按钮模拟 4 卡集群间 Token 分发开销...</div>
         </div>
       </div>
     </section>
@@ -293,6 +356,18 @@ nsys profile \
       <span class="tab-label">诊断实验</span>
     </button>
   </nav>
+
+  <!-- iOS Roadmap Detail Bottom Sheet / Drawer -->
+  <div id="roadmap-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 200; align-items: flex-end; justify-content: center;">
+    <div style="background: var(--bg-secondary); border-top: 1px solid var(--border-subtle); border-radius: var(--radius-lg) var(--radius-lg) 0 0; width: 100%; max-width: 600px; max-height: 80vh; overflow-y: auto; padding: 20px 20px calc(var(--safe-bottom) + 20px); box-shadow: 0 -10px 40px rgba(0,0,0,0.8); animation: slideUp 0.25s ease-out;">
+      <div style="width: 36px; height: 5px; background: rgba(255,255,255,0.2); border-radius: 99px; margin: 0 auto 16px;"></div>
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+        <h3 id="modal-step-title" style="font-size: 18px; font-weight: 700; color: #fff;"></h3>
+        <button id="btn-close-modal" style="background: var(--bg-tertiary); border: none; color: var(--text-muted); width: 32px; height: 32px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px;">✕</button>
+      </div>
+      <div id="modal-step-content" style="font-size: 13px; line-height: 1.6; color: var(--text-secondary);"></div>
+    </div>
+  </div>
 
   <script type="module" src="./app.js"></script>
 </body>
