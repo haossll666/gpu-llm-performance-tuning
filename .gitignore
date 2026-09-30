@@ -1,0 +1,59 @@
+# Prerequisites
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Distribution / Packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# OS / Editor specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Profiling / Trace outputs
+*.qdrep
+*.nsys-rep
+*.ncu-rep
+*.sqlite
+traces/
+results/
+reports/
+
+# Sensitive files
+*.pem
+*.key
+*.token
+.env
+.env.local

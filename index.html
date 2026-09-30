@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>GPU LLM Performance Tuning — 4×GPU DeepSeek MoE 全链路性能工程</title>
+  <link rel="stylesheet" href="./style.css">
+  <meta name="theme-color" content="#07090e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+
+  <!-- Dynamic Island Header -->
+  <header class="ios-header">
+    <div class="island-capsule">
+      <div class="island-left">
+        <span class="pulse-dot"></span>
+        <span>4×GPU Cluster Active</span>
+      </div>
+      <div class="island-right">
+        <span>DeepSeek-V2/V3 MoE</span>
+      </div>
+    </div>
+
+    <div class="app-branding">
+      <div class="app-title-group">
+        <h1>GPU LLM Performance Tuning</h1>
+        <p>从用户请求一路下钻到 CUDA Kernel：Latency → Engine → Cache → GPU → Multi-GPU → Kernel → Observability</p>
+      </div>
+      <div class="badge-4xgpu">PCIe Gen4</div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="main-container">
+
+    <!-- View 1: 全景地图 (Panorama Architecture Map) -->
+    <section id="view-panorama" class="view-section active">
+      <div class="map-canvas-card">
+        <div class="map-header">
+          <span style="font-size: 13px; font-weight: 700; color: #fff;">01 全景系统拓扑</span>
+          <span class="map-hint">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+            点击任意节点查看下钻深度剖析
+          </span>
+        </div>
+
+        <!-- Node Topology Grid -->
+        <div class="topology-flow" id="topology-nodes">
+          <!-- Dynamically populated by app.js -->
+        </div>
+      </div>
+
+      <!-- Node Detail Inspector -->
+      <div class="inspector-card" id="node-inspector">
+        <!-- Rendered by app.js -->
+      </div>
+
+      <!-- Recommended 10-step Learning Route -->
+      <div class="roadmap-section">
+        <div class="roadmap-title">建议学习路线</div>
+        <div class="roadmap-pills">
+          <div class="pill-item" onclick="window.selectNode('latency')">① Prefill vs Decode</div>
+          <div class="pill-item" onclick="window.selectNode('latency')">② TTFT / TPOT / tok/s</div>
+          <div class="pill-item" onclick="window.selectNode('kvcache')">③ KV Cache (MLA & Paged)</div>
+          <div class="pill-item" onclick="window.selectNode('gpu')">④ HBM / Tensor Core</div>
+          <div class="pill-item" onclick="window.selectNode('multigpu')">⑤ TP / EP / DP 并行</div>
+          <div class="pill-item" onclick="window.selectNode('multigpu')">⑥ NCCL / PCIe 瓶颈</div>
+          <div class="pill-item" onclick="window.selectNode('kernel')">⑦ Attention / MoE kernels</div>
+          <div class="pill-item" onclick="window.selectNode('engine')">⑧ vLLM / SGLang 生产参数</div>
+          <div class="pill-item" onclick="window.selectNode('scheduler')">⑨ Prometheus / Grafana 监控</div>
+          <div class="pill-item" onclick="window.selectNode('kernel')">⑩ Nsight Systems 抓包</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- View 2: 指标体系 (Metrics & Live Calculators) -->
+    <section id="view-metrics" class="view-section">
+      <div class="calc-card">
+        <div class="calc-title">
+          <span>🧮 交互式 KV Cache 内存与最大并发测算器</span>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+          直观对比 DeepSeek MLA（低秩压缩 576 元素）与传统 GQA/MHA 在受限 4×GPU 显存下的并发承载极限。
+        </p>
+
+        <div class="form-group">
+          <label class="form-label">模型架构预设</label>
+          <select id="calc-arch">
+            <option value="deepseek-v3-mla">DeepSeek-V3 / R1 (MLA, 61层, 576元素/tok)</option>
+            <option value="deepseek-v2-lite" selected>DeepSeek-V2-Lite (MLA, 27层, 576元素/tok)</option>
+            <option value="llama3-70b-gqa">Meta LLaMA-3-70B (GQA, 80层, 8-head)</option>
+            <option value="llama-standard-mha">Standard MHA (32层, 32-head)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">
+            <span>平均序列长度 (Seq Length)</span>
+            <span class="val" id="val-seq">4096 tokens</span>
+          </div>
+          <input type="range" id="calc-seq" min="512" max="16384" step="512" value="4096">
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">
+            <span>并发请求流数 (Concurrency)</span>
+            <span class="val" id="val-batch">16 流</span>
+          </div>
+          <input type="range" id="calc-batch" min="1" max="128" step="1" value="16">
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px;">
+          <div class="form-group">
+            <label class="form-label">KV 存储精度</label>
+            <select id="calc-dtype">
+              <option value="fp8" selected>FP8 (1 Byte)</option>
+              <option value="fp16">FP16 / BF16 (2 Bytes)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">
+              <span>GPU 卡数</span>
+              <span class="val" id="val-gpus">4 张</span>
+            </div>
+            <input type="number" id="calc-gpus" min="1" max="8" value="4">
+          </div>
+          <div class="form-group">
+            <div class="form-label">
+              <span>单卡显存</span>
+              <span class="val" id="val-vram">24 GB</span>
+            </div>
+            <input type="number" id="calc-vram" min="16" max="96" value="24">
+          </div>
+        </div>
+
+        <div class="calc-results-panel">
+          <div class="metric-kpi">
+            <span class="metric-label">单 Token 显存消耗</span>
+            <span class="metric-value" id="res-tok-size">-- KB</span>
+            <span class="metric-sub">MLA 压缩增益显著</span>
+          </div>
+          <div class="metric-kpi">
+            <span class="metric-label">单条完整序列显存</span>
+            <span class="metric-value" id="res-seq-size">-- MB</span>
+            <span class="metric-sub">Paged 虚拟块化管理</span>
+          </div>
+          <div class="metric-kpi">
+            <span class="metric-label">集群可用 KV 缓存池</span>
+            <span class="metric-value" id="res-kv-pool">-- GB</span>
+            <span class="metric-sub">扣除权重底噪后</span>
+          </div>
+          <div class="metric-kpi">
+            <span class="metric-label">理论最大并发流数</span>
+            <span class="metric-value" id="res-concurrency">-- Streams</span>
+            <span class="metric-sub">不触发 Preemption 上限</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Roofline Model Primer -->
+      <div class="calc-card">
+        <div class="calc-title">
+          <span>📐 Roofline 模型与硬件平衡比 (Machine Balance)</span>
+        </div>
+        <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+          <p><strong>Machine Balance 拐点公式：</strong> \(I^* = \frac{\text{Peak TFLOPS}}{\text{Peak Memory Bandwidth (TB/s)}}\)</p>
+          <ul style="margin: 10px 0 10px 18px;">
+            <li><strong>RTX 4090：</strong> 165 TFLOPS / 1.0 TB/s = <strong>165 FLOPs/Byte</strong></li>
+            <li><strong>H100 SXM：</strong> 989 TFLOPS / 3.35 TB/s = <strong>295 FLOPs/Byte</strong></li>
+          </ul>
+          <p><strong>结论：</strong> Decode 阶段的算力密度（Arithmetic Intensity）仅为约 <strong>2~8 FLOPs/Byte</strong>，远远低于 165！因此在自回归生成阶段，提升单 Token 生成速度的唯一物理杠杆是<strong>显存带宽（HBM/GDDR）</strong>或通过<strong>量化/投机解码</strong>减少每次读取权重的字节数，盲目堆砌 TFLOPS 算力毫无意义！</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- View 3: 瓶颈诊断 (Decision Tree & Diagnostics) -->
+    <section id="view-bottlenecks" class="view-section">
+      <div class="calc-card">
+        <div class="calc-title">
+          <span>🌲 生产级瓶颈定位决策树</span>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+          遇到“推理慢”时，按顺序执行以下 4 步排查，快速归因根因：
+        </p>
+
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="inspect-box" style="border-left: 3px solid var(--accent-cyan);">
+            <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Step 1: 排查排队与调度 (Queue & Preemption)</div>
+            <p>检查 Prometheus <code>vllm:num_requests_waiting</code> 是否积压。若积压 > 20，说明并发超限；检查日志是否有 <code>Preempting request</code>，若频繁驱逐，调低 <code>max-model-len</code> 并开启 Prefix Caching。</p>
+          </div>
+
+          <div class="inspect-box" style="border-left: 3px solid var(--accent-emerald);">
+            <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Step 2: 排查首字抖动 (TTFT & Chunked Prefill)</div>
+            <p>若 TPOT 流畅（<35ms/tok）但 TTFT 奇高，说明长短请求互博。新请求的 Prefill 独占打断了正在 Decode 的请求。立即开启 <code>--enable-chunked-prefill true</code> 消除毛刺。</p>
+          </div>
+
+          <div class="inspect-box" style="border-left: 3px solid var(--accent-amber);">
+            <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Step 3: 排查多卡通信阻塞 (4×GPU PCIe All-to-All)</div>
+            <p>在 4 卡无 NVLink 机器上，查看 <code>DCGM_FI_DEV_PCIE_TX_THROUGHPUT</code>。若常年接近 30GB/s 且 SM% 极低，说明 TP=4 的 120+ 次 All-Reduce 阻塞在 PCIe。改用 EP=4（专家并行）仅传输激活值。</p>
+          </div>
+
+          <div class="inspect-box" style="border-left: 3px solid var(--accent-rose);">
+            <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Step 4: 排查底层算子与访存墙 (Kernel Profiling)</div>
+            <p>使用 <code>nsys</code> 抓包。如果每个 Step 之间存在大量空白（CPU Launch 延迟），开启 CUDA Graph；若 FlashAttention 执行耗时过长，确认驱动与 PyTorch 版本是否支持 FlashAttention-2/3。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- View 4: 工具链 (Toolchains & Generators) -->
+    <section id="view-toolchains" class="view-section">
+      <div class="calc-card">
+        <div class="calc-title">
+          <span>🛠️ 4×GPU 生产启动参数生成器</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">推理引擎选择</label>
+          <select id="tool-engine">
+            <option value="vllm" selected>vLLM (PagedAttention 生产主流)</option>
+            <option value="sglang">SGLang (RadixAttention 极致前缀复用)</option>
+          </select>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0;">
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="tool-chunked" checked> 分块预填充 (Chunked)
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="tool-prefix" checked> 前缀缓存 (Prefix Caching)
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" id="tool-fp8" checked> FP8 KV 缓存压缩
+          </label>
+        </div>
+
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">生成的优化启动指令：</div>
+        <pre class="code-block" id="tool-command-preview"></pre>
+      </div>
+
+      <div class="calc-card">
+        <div class="calc-title">
+          <span>🔭 Nsight Systems 抓包时序实操指令</span>
+        </div>
+        <pre class="code-block"># 使用 nsys 抓取 30 秒高并发时序流（跳过前 15s 预热）
+nsys profile \
+  --trace=cuda,nvtx,osrt \
+  --cuda-memory-usage=true \
+  --delay=15 --duration=30 \
+  -o ./profiles/deepseek_4xgpu_trace \
+  vllm serve /models/deepseek-v2-lite --tensor-parallel-size 4</pre>
+      </div>
+    </section>
+
+    <!-- View 5: 诊断实验室 (Diagnostic Laboratory) -->
+    <section id="view-lab" class="view-section">
+      <div style="margin-bottom: 14px;">
+        <h2 style="font-size: 18px; font-weight: 700;">🧪 工业级实战诊断实验室</h2>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+          以下 5 个案例源于真实的 4×GPU 生产部署故障。点击选项提交诊断，检验调优内功！
+        </p>
+      </div>
+
+      <div id="cases-container">
+        <!-- Dynamically rendered by app.js -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- iOS Bottom Tab Bar (Apple HIG) -->
+  <nav class="ios-tab-bar">
+    <button class="tab-btn active" data-tab="view-panorama">
+      <span class="tab-icon">🗺️</span>
+      <span class="tab-label">全景地图</span>
+    </button>
+    <button class="tab-btn" data-tab="view-metrics">
+      <span class="tab-icon">📊</span>
+      <span class="tab-label">指标体系</span>
+    </button>
+    <button class="tab-btn" data-tab="view-bottlenecks">
+      <span class="tab-icon">⚡</span>
+      <span class="tab-label">瓶颈诊断</span>
+    </button>
+    <button class="tab-btn" data-tab="view-toolchains">
+      <span class="tab-icon">🛠️</span>
+      <span class="tab-label">工具链</span>
+    </button>
+    <button class="tab-btn" data-tab="view-lab">
+      <span class="tab-icon">🧪</span>
+      <span class="tab-label">诊断实验</span>
+    </button>
+  </nav>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

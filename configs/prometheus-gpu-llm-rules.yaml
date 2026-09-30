@@ -1,0 +1,57 @@
+# ==============================================================================
+# Prometheus Alerting Rules for GPU LLM Serving & Hardware Health
+# Compatible with DCGM-Exporter and vLLM / SGLang native Prometheus endpoints
+# ==============================================================================
+
+groups:
+  - name: gpu_llm_alerts
+    rules:
+      # 1. KV Cache Exhaustion (Preemption Risk)
+      - alert: KVCacheNearlyExhausted
+        expr: vllm:gpu_cache_usage_factor > 0.95
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "vLLM KV Cache GPU usage exceeded 95%"
+          description: "GPU instance {{ $labels.instance }} has KV Cache usage at {{ $value | humanizePercentage }}. Imminent risk of request preemption and throughput degradation."
+
+      # 2. High Queuing Time (Capacity Saturation)
+      - alert: HighRequestQueueCount
+        expr: vllm:num_requests_waiting > 25
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Request waiting queue backlog high"
+          description: "Currently {{ $value }} requests waiting in queue on {{ $labels.instance }}. High TTFT expected."
+
+      # 3. PCIe Communication Bottleneck (Saturation)
+      - alert: PCIeBandwidthSaturated
+        expr: (DCGM_FI_DEV_PCIE_TX_THROUGHPUT + DCGM_FI_DEV_PCIE_RX_THROUGHPUT) / 1024 / 1024 > 28000
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU PCIe throughput nearing bus capacity"
+          description: "PCIe throughput on GPU {{ $labels.gpu }} ({{ $labels.instance }}) reached {{ $value }} MB/s (>28 GB/s on PCIe 4.0 x16). Multi-GPU All-to-All communication bottleneck detected."
+
+      # 4. GPU Thermal Throttling
+      - alert: GPUThermalThrottling
+        expr: DCGM_FI_DEV_THERMAL_VIOLATION > 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU Thermal Throttling Active"
+          description: "GPU {{ $labels.gpu }} on {{ $labels.instance }} is throttling clock frequencies due to temperature limits."
+
+      # 5. Token Generation Stutter (High TPOT / ITL)
+      - alert: HighInterTokenLatency
+        expr: histogram_quantile(0.95, sum(rate(vllm:time_per_output_token_seconds_bucket[2m])) by (le)) > 0.080
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 TPOT exceeded 80ms/token"
+          description: "Streaming decode speed degraded. User will experience noticeable stutter."

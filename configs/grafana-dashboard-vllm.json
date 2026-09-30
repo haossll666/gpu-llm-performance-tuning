@@ -1,0 +1,119 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "LLM Latency & SLAs (TTFT / TPOT)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "drawStyle": "line", "lineInterpolation": "smooth" },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "title": "Time to First Token (TTFT) P50 / P95 / P99",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(vllm:time_to_first_token_seconds_bucket[2m])) by (le))", "legendFormat": "P50 TTFT" },
+        { "expr": "histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[2m])) by (le))", "legendFormat": "P95 TTFT" },
+        { "expr": "histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket[2m])) by (le))", "legendFormat": "P99 TTFT" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "drawStyle": "line", "lineInterpolation": "smooth" },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "title": "Time Per Output Token (TPOT / Decode Latency)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(vllm:time_per_output_token_seconds_bucket[2m])) by (le))", "legendFormat": "P50 TPOT" },
+        { "expr": "histogram_quantile(0.95, sum(rate(vllm:time_per_output_token_seconds_bucket[2m])) by (le))", "legendFormat": "P95 TPOT" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 8 },
+      "id": 101,
+      "title": "vLLM Engine & KV Cache Memory Subsystem",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "max": 1,
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 0.95 }] },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 9 },
+      "id": 3,
+      "title": "GPU KV Cache Usage Factor",
+      "type": "gauge",
+      "targets": [{ "expr": "vllm:gpu_cache_usage_factor", "legendFormat": "Cache Usage" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 9 },
+      "id": 4,
+      "title": "Running vs Waiting Request Backlog",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "vllm:num_requests_running", "legendFormat": "Running Requests" },
+        { "expr": "vllm:num_requests_waiting", "legendFormat": "Waiting Queue" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 9 },
+      "id": 5,
+      "title": "Prefix Caching Hit Rate",
+      "type": "gauge",
+      "targets": [{ "expr": "vllm:prefix_cache_hit_rate", "legendFormat": "Prefix Hit Rate" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 9 },
+      "id": 6,
+      "title": "PCIe Bus Throughput (Tx + Rx)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "(DCGM_FI_DEV_PCIE_TX_THROUGHPUT + DCGM_FI_DEV_PCIE_RX_THROUGHPUT) * 1024 * 1024", "legendFormat": "GPU {{gpu}} PCIe Throughput" }
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["vllm", "gpu", "llm", "deepseek", "sglang"],
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "browser",
+  "title": "GPU LLM Production Serving & Bottlenecks"
+}
